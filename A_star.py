@@ -12,56 +12,15 @@ G = ox.graph_from_place('Singapore', network_type='drive')
 def get_nearest_node(graph, point):
     return ox.distance.nearest_nodes(graph, point[1], point[0])
 
-# Function to fetch real-time traffic data from the LTA API
-def fetch_traffic_data(api_key):
-    url = "http://datamall2.mytransport.sg/ltaodataservice/v3/TrafficSpeedBands"
-    headers = {
-        'AccountKey': api_key,
-        'accept': 'application/json'
-    }
-    response = requests.get(url, headers=headers)
-    
-    if response.status_code == 200:
-        try:
-            data = response.json()
-            return data
-        except requests.exceptions.JSONDecodeError as e:
-            print(f"JSON decode error: {e}")
-            print(f"Response content: {response.content}")
-    else:
-        print(f"Failed to fetch data: {response.status_code}")
-        print(f"Response content: {response.content}")
-    
-    return None
-
-# Preprocess the traffic data into a usable form
-def preprocess_traffic_data(traffic_data):
-    traffic_dict = {}
-    for item in traffic_data['value']:
-        key = (float(item['StartLat']), float(item['StartLon']), float(item['EndLat']), float(item['EndLon']))
-        traffic_dict[key] = item['SpeedBand']
-    return traffic_dict
-
 # Heuristic function for A*
-def heuristic(node1, node2, graph, traffic_dict):
+def heuristic(node1, node2, graph):
     coords_1 = (graph.nodes[node1]['y'], graph.nodes[node1]['x'])
     coords_2 = (graph.nodes[node2]['y'], graph.nodes[node2]['x'])
-    straight_line_distance = geodesic(coords_1, coords_2).meters
-
-    # Find the road segment that corresponds to this heuristic calculation
-    road_segment = (coords_1[0], coords_1[1], coords_2[0], coords_2[1])
-    speed_band = traffic_dict.get(road_segment, 4)  # Default to SpeedBand 4 if not found
-
-    # Convert SpeedBand to average speed (example conversion, adjust as needed)
-    speed_band_to_avg_speed = {1: 10, 2: 20, 3: 25, 4: 35, 5: 45, 6: 55, 7: 65}
-    avg_speed = speed_band_to_avg_speed.get(speed_band, 35)  # Default to 35 km/h if not found
-
-    # Calculate heuristic based on speed
-    h = straight_line_distance / avg_speed  # Time-based heuristic (seconds)
+    h = geodesic(coords_1, coords_2).meters
     return h
 
 # Custom A* search algorithm
-def a_star_search(graph, start, goal, traffic_dict):
+def a_star_search(graph, start, goal):
     pq = [(0, start, [])]  # Priority queue as (cost, current_node, path)
     costs = {start: 0}
     visited = set()
@@ -82,19 +41,32 @@ def a_star_search(graph, start, goal, traffic_dict):
             if neighbor in visited:
                 continue
             
-            segment_key = (graph.nodes[current]['y'], graph.nodes[current]['x'], graph.nodes[neighbor]['y'], graph.nodes[neighbor]['x'])
-            speed_band = traffic_dict.get(segment_key, 4)  # Default to SpeedBand 4 if not found
-            speed_band_to_avg_speed = {1: 10, 2: 20, 3: 25, 4: 35, 5: 45, 6: 55, 7: 65}
-            avg_speed = speed_band_to_avg_speed.get(speed_band, 35)  # Default to 35 km/h if not found
-
-            segment_length = graph[current][neighbor][0]['length']
-            travel_time = segment_length / (avg_speed * 1000 / 3600)  # Convert speed to m/s for travel time
-
-            new_cost = costs[current] + travel_time
+            new_cost = costs[current] + graph[current][neighbor][0]['length']
             if neighbor not in costs or new_cost < costs[neighbor]:
                 costs[neighbor] = new_cost
-                priority = new_cost + heuristic(neighbor, goal, graph, traffic_dict)
+                priority = new_cost + heuristic(neighbor, goal, graph)
                 heapq.heappush(pq, (priority, neighbor, path))
+    
+    return None
+
+# Function to fetch real-time traffic data from the LTA API
+def fetch_traffic_data(api_key):
+    url = "http://datamall2.mytransport.sg/ltaodataservice/v3/TrafficSpeedBands"
+    headers = {
+        'AccountKey': api_key,
+        'accept': 'application/json'
+    }
+    response = requests.get(url, headers=headers)
+    
+    if response.status_code == 200:
+        try:
+            return response.json()
+        except requests.exceptions.JSONDecodeError as e:
+            print(f"JSON decode error: {e}")
+            print(f"Response content: {response.content}")
+    else:
+        print(f"Failed to fetch data: {response.status_code}")
+        print(f"Response content: {response.content}")
     
     return None
 
@@ -135,7 +107,7 @@ def calculate_total_distance(order):
     total_distance = 0
     current_node = start_node
     for node in order:
-        segment = a_star_search(G, current_node, node, traffic_dict)
+        segment = a_star_search(G, current_node, node)
         if segment:
             segment_distance = sum(G[segment[i]][segment[i + 1]][0]['length'] for i in range(len(segment) - 1))
             total_distance += segment_distance
@@ -156,7 +128,7 @@ def main():
     # Fetch real-time traffic data from LTA
     api_key = 'o2oSSMCJSUOkZQxWvyAjsA=='  # Replace with your actual LTA API key
     traffic_data = fetch_traffic_data(api_key)
-    traffic_dict = preprocess_traffic_data(traffic_data) if traffic_data else {}
+    traffic_factor = determine_traffic_factor(traffic_data) if traffic_data else 1.0
 
     # Find the optimal order using a brute-force approach
     optimal_order = min(permutations(destination_nodes), key=calculate_total_distance)
@@ -172,7 +144,7 @@ def main():
     total_duration = 0
 
     for i, dest_node in enumerate(optimal_order):
-        segment = a_star_search(G, route_nodes[-1], dest_node, traffic_dict)
+        segment = a_star_search(G, route_nodes[-1], dest_node)
         if segment:
             route_segments.append((segment, colors[i % len(colors)]))
             route_nodes.extend(segment[1:])  # Avoid duplicating nodes
