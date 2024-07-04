@@ -60,7 +60,7 @@ def visualize_paths(G, paths, nodes):
             color = 'red' if idx == 0 else 'green' if idx == len(nodes) - 1 else 'orange'
             folium.Marker(lat_lon, popup=f'Location {idx+1}', icon=folium.Icon(color=color)).add_to(route_map)
 
-        route_map.save("tsp_shortest_path_singapore.html")
+        route_map.save("dijkstra.html")
         print("TSP path visualization saved as 'tsp_shortest_path_singapore.html'.")
     except Exception as e:
         print(f"Error visualizing paths: {e}")
